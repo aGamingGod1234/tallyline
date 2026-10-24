@@ -2,15 +2,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 Status = Literal["supported", "needs-review", "blocked", "resolved"]
 
 
 class DecisionApproval(BaseModel):
-    decision_id: str = Field(min_length=1)
+    decision_id: Literal["budget-variance", "story-consent", "period-check"]
     resolution: str = Field(min_length=1, max_length=500)
+
+    @field_validator("resolution")
+    @classmethod
+    def require_resolution(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A resolution note is required.")
+        return value
 
 
 class Claim(BaseModel):

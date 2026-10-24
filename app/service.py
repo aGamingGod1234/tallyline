@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .agent import provider_label
 from .models import CaseSummary, Claim, Decision, RunResult
 
 
@@ -175,7 +174,7 @@ def run_case(approved: dict[str, str] | None = None) -> RunResult:
     ]
     return RunResult(
         run_id="run-gn-2608",
-        provider=provider_label(),
+        provider="Strands • offline evidence pass",
         agent="Tallyline Coordinator",
         state="complete",
         summary=summary,
@@ -190,6 +189,11 @@ def run_case(approved: dict[str, str] | None = None) -> RunResult:
 def _draft_report(award: dict[str, Any], claims: list[Claim], decisions: list[Decision], duplicate_count: int) -> str:
     claim_lines = "\n".join(f"- **{claim.label}:** {claim.value} ({claim.status}; {claim.source})" for claim in claims)
     open_lines = "\n".join(f"- {decision.label}: {decision.question}" for decision in decisions if not decision.resolved)
+    resolved_lines = "\n\n".join(
+        f"### {decision.label}\n\n"
+        + "\n".join(f"> {line}" for line in (decision.resolution or "").splitlines())
+        for decision in decisions if decision.resolved
+    )
     return (
         f"# {award['title']} — closeout draft\n\n"
         f"**Funder:** {award['funder']}  \n**Award:** ${award['amount']:,.0f}  \n**Period:** {award['period']}\n\n"
@@ -200,6 +204,7 @@ def _draft_report(award: dict[str, Any], claims: list[Claim], decisions: list[De
         "Numbers above are sourced from the fixture files; they are not an evaluation of a real program.\n\n"
         "## Human decisions before submission\n\n"
         f"{open_lines or '- No open decisions.'}\n"
+        + (f"\n## Recorded human decisions\n\n{resolved_lines}\n" if resolved_lines else "")
     )
 
 

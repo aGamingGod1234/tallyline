@@ -25,37 +25,38 @@ except ImportError:  # pragma: no cover - exercised only in minimal environments
         return function
 
 
-@tool
-def reconcile_evidence(case_id: str) -> str:
-    """Return the reconciled claim ledger for a case.
+def _evidence_tools(approved_decisions: dict[str, str] | None = None) -> list[Any]:
+    # Capture trusted state once; model-provided tool arguments cannot approve decisions.
+    approved = dict(approved_decisions or {})
 
-    The deterministic implementation remains the source of truth. Keeping it
-    behind a typed Strands tool means a live model can request the same bounded
-    operation without receiving a write or submission capability.
-    """
+    @tool
+    def reconcile_evidence(case_id: str) -> str:
+        """Return the reconciled claim ledger and human decisions for a case."""
+        from .service import run_case
 
-    from .service import run_case
+        result = run_case(approved)
+        if case_id != result.summary.award_id:
+            return json.dumps({"error": "unknown case", "case_id": case_id})
+        return json.dumps({
+            "summary": result.summary.model_dump(),
+            "claims": [claim.model_dump() for claim in result.claims],
+            "decisions": [decision.model_dump() for decision in result.decisions],
+        })
 
-    result = run_case()
-    if case_id != result.summary.award_id:
-        return json.dumps({"error": "unknown case", "case_id": case_id})
-    return json.dumps({
-        "summary": result.summary.model_dump(),
-        "claims": [claim.model_dump() for claim in result.claims],
-        "decisions": [decision.model_dump() for decision in result.decisions],
-    })
+    @tool
+    def draft_supported_report(case_id: str) -> str:
+        """Return the evidence-backed report with the operator's recorded decisions."""
+        from .service import export_markdown, run_case
+
+        result = run_case(approved)
+        if case_id != result.summary.award_id:
+            return "Unknown case; no draft produced."
+        return export_markdown(result)
+
+    return [reconcile_evidence, draft_supported_report]
 
 
-@tool
-def draft_supported_report(case_id: str, approved_decisions: str = "none") -> str:
-    """Return a report draft built from the claim ledger and approvals."""
-
-    from .service import export_markdown, run_case
-
-    result = run_case()
-    if case_id != result.summary.award_id:
-        return "Unknown case; no draft produced."
-    return export_markdown(result) + f"\n\nAgent context: approved decisions = {approved_decisions}."
+reconcile_evidence, draft_supported_report = _evidence_tools()
 
 
 def _configured_model() -> Any | None:
@@ -73,9 +74,9 @@ def _configured_model() -> Any | None:
 
         return GeminiModel(
             client_args={"api_key": gemini_key},
-            model_id=os.getenv("TALLYLINE_MODEL_ID", "gemini-2.5-flash"),
+            model_id=os.getenv("TALLYLINE_MODEL_ID", "gemini-3.8-flash"),
             params={
-                "temperature": 0.2,
+                "temperature": 1.0,
                 "max_output_tokens": 1024,
                 "top_p": 0.9,
             },
@@ -92,7 +93,7 @@ def _configured_model() -> Any | None:
     return BedrockModel(**model_config)
 
 
-def build_strands_agent() -> Any | None:
+def build_strands_agent(approved_decisions: dict[str, str] | None = None) -> Any | None:
     """Build the real Strands coordinator when the SDK is importable.
 
     Construction is side-effect free. The model is invoked only by the
@@ -110,7 +111,7 @@ def build_strands_agent() -> Any | None:
             "Never invent claims, submit a report, send email, or move money. "
             "Escalate missing evidence and consent decisions to a human."
         ),
-        tools=[reconcile_evidence, draft_supported_report],
+        tools=_evidence_tools(approved_decisions),
     )
 
 
@@ -118,8 +119,8 @@ def provider_label() -> str:
     if os.getenv("TALLYLINE_AGENT_MODE", "local").lower() != "live":
         return "Strands • offline evidence pass"
     provider = os.getenv("TALLYLINE_MODEL_PROVIDER", "auto").lower()
-    if provider == "auto" and (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
-        provider = "gemini"
+    if provider == "auto":
+        provider = "gemini" if (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) else "bedrock"
     return f"Strands • live {provider}"
 
 
@@ -131,11 +132,13 @@ def invoke_live_agent(case_id: str, approved_decisions: dict[str, str] | None = 
     the application labels a run as live.
     """
 
-    agent = build_strands_agent()
+    agent = build_strands_agent(approved_decisions)
     if agent is None:
         raise RuntimeError("The Strands SDK is not available in this environment.")
-    decisions = ", ".join(f"{key}: {value}" for key, value in (approved_decisions or {}).items()) or "none"
     response = agent(
-        f"""Review synthetic grant closeout case {case_id}. You must use the reconcile_evidence tool and then the draft_supported_report tool. Summarize in under 80 words for an operator: the supported totals, any claim that needs human review, and the consent boundary. Use only tool-returned evidence. Never invent a number, submit anything, or move money. Current approved decisions: {decisions}."""
+        f"""Review synthetic grant closeout case {case_id}. You must use the reconcile_evidence tool and then the draft_supported_report tool. Summarize in under 80 words for an operator: the supported totals, any claim that needs human review, and the consent boundary. Use only tool-returned evidence. Never invent a number, submit anything, or move money. Human approvals are already captured in the tool results."""
     )
-    return str(response).strip()
+    note = str(response).strip()
+    if not note:
+        raise RuntimeError("The live agent returned an empty readout.")
+    return note

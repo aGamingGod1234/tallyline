@@ -109,7 +109,7 @@ async function runCase({ reset = false } = {}) {
   $(".button-label").textContent = "Following evidence…";
   $("#savedState").textContent = "RUNNING / TRACE";
   setRunStatus("running", "Tracing source files");
-  $("#routeFill").style.width = "24%";
+  $("#routeFill").style.transform = "scaleX(.24)";
   await new Promise((resolve) => window.setTimeout(resolve, reset ? 180 : 620));
   try {
     const response = await fetch(reset ? "/api/reset" : "/api/run", { method: "POST" });

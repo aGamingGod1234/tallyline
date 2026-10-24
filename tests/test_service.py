@@ -30,3 +30,39 @@ def test_export_has_traceability_index_and_open_decision_count():
     assert "## Evidence index" in exported
     assert "`finance.csv`" in exported
     assert "**Open human decisions:** 3" in exported
+
+
+def test_export_preserves_resolved_notes_and_remaining_questions():
+    note = "Carry the balance forward to the fall heat-safety round."
+    result = run_case({"budget-variance": note})
+    exported = export_markdown(result)
+
+    assert note in result.report_markdown
+    assert "## Recorded human decisions" in exported
+    assert "### Finance note" in exported
+    assert "Keep the second beneficiary note out" in exported
+    assert "**Open human decisions:** 2" in exported
+
+
+def test_fully_resolved_packet_keeps_every_human_resolution():
+    approvals = {
+        "budget-variance": "Return the unspent balance to the funder.",
+        "story-consent": "Keep the non-consented note private.",
+        "period-check": "Coverage confirmed against the source log.",
+    }
+    exported = export_markdown(run_case(approvals))
+
+    for resolution in approvals.values():
+        assert resolution in exported
+    assert "No open decisions." in exported
+    assert "**Open human decisions:** 0" in exported
+    assert "A resident described a difficult night" not in exported
+
+
+def test_deterministic_case_is_offline_even_when_live_mode_is_configured(monkeypatch):
+    monkeypatch.setenv("TALLYLINE_AGENT_MODE", "live")
+
+    result = run_case()
+
+    assert result.agent_mode == "local"
+    assert result.provider == "Strands • offline evidence pass"
